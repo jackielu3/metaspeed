@@ -119,6 +119,11 @@ export class PlatformerHud
         this.finishText.setVisible(false)
     }
 
+    getGameObjects (): Phaser.GameObjects.GameObject[]
+    {
+        return [this.deathText, this.countdownText, this.timerText, this.finishText]
+    }
+
     private formatTimeMs (ms: number): string
     {
         const clamped = Math.max(0, Math.floor(ms))

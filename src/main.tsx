@@ -6,7 +6,8 @@ const config: Phaser.Types.Core.GameConfig = {
     width: 800,
     height: 600,
     parent: 'app',
-    backgroundColor: '#fbe3d2',
+    backgroundColor: '#fcdfcd',
+    pixelArt: true,
     fps: {
         target: 60,
         smoothStep: false,
@@ -16,7 +17,7 @@ const config: Phaser.Types.Core.GameConfig = {
     physics: {
         default: 'arcade',
         arcade: {
-            gravity: { x: 0, y: 900 },
+            gravity: { x: 0, y: 450 },
             debug: true
         }
     },

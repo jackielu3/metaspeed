@@ -1,14 +1,16 @@
 import Phaser from 'phaser'
 import { PlatformerHud } from './PlatformerHud'
 
+const WORLD_SCALE = 3
+
 const PLAYER_TUNING = {
-    accelX: 1000,
-    jumpVelocity: 430,
-    maxVelocityX: 400,
-    maxVelocityY: 700,
+    accelX: 400,
+    jumpVelocity: 215,
+    maxVelocityX: 180,
+    maxVelocityY: 350,
     dragX: 900,
-    wallSlideMaxFallSpeed: 160,
-    wallJumpVelocityX: 240,
+    wallSlideMaxFallSpeed: 80,
+    wallJumpVelocityX: 120,
     wallCoyoteTimeMs: 120
 } as const
 
@@ -26,18 +28,17 @@ enum RunState
     Finished = 'Finished'
 }
 
-const LEVEL_BOUNDS = {
-    width: 2400,
-    height: 600
-} as const
-
 export class PlatformerScene extends Phaser.Scene
 {
     private cursors!: Phaser.Types.Input.Keyboard.CursorKeys
     private restartKey!: Phaser.Input.Keyboard.Key
     private jumpKey!: Phaser.Input.Keyboard.Key
     private player!: Phaser.Physics.Arcade.Sprite
-    private platforms!: Phaser.Physics.Arcade.StaticGroup
+    private tilemap!: Phaser.Tilemaps.Tilemap
+    private groundLayer!: Phaser.Tilemaps.TilemapLayer
+    private platformLayer!: Phaser.Tilemaps.TilemapLayer
+    private levelWidthPx = 0
+    private levelHeightPx = 0
     private hud!: PlatformerHud
     private goalZone!: Phaser.GameObjects.Zone
     private isDead = false
@@ -54,6 +55,12 @@ export class PlatformerScene extends Phaser.Scene
     constructor ()
     {
         super('PlatformerScene')
+    }
+
+    preload ()
+    {
+        this.load.tilemapTiledJSON('level-0', 'assets/maps/level-0.tmj')
+        this.load.image('kenny-tiles', 'assets/tiles/kenny_pixel-line-platformer.png')
     }
 
     create ()
@@ -76,9 +83,6 @@ export class PlatformerScene extends Phaser.Scene
             this.game.events.off(Phaser.Core.Events.VISIBLE, this.handleFocus, this)
         })
 
-        this.physics.world.setBounds(0, 0, LEVEL_BOUNDS.width, LEVEL_BOUNDS.height)
-        this.physics.world.setBoundsCollision(true, true, false, false)
-
         if (!this.input.keyboard)
         {
             throw new Error('Keyboard input plugin not available')
@@ -90,42 +94,86 @@ export class PlatformerScene extends Phaser.Scene
 
         this.hud = new PlatformerHud(this)
 
-        this.platforms = this.physics.add.staticGroup()
+        this.tilemap = this.make.tilemap({ key: 'level-0' })
+        this.levelWidthPx = this.tilemap.widthInPixels
+        this.levelHeightPx = this.tilemap.heightInPixels
 
-        const groundY = LEVEL_BOUNDS.height - 16
+        this.physics.world.setBounds(0, 0, this.levelWidthPx, this.levelHeightPx)
+        this.physics.world.setBoundsCollision(true, true, false, false)
 
-        for (let x = 64; x <= LEVEL_BOUNDS.width - 1400; x += 128)
+        const tileset = this.tilemap.addTilesetImage('kenny_pixel-line-platformer', 'kenny-tiles', 8, 8, 0, 0, 1)
+        if (!tileset)
         {
-            this.platforms.create(x, groundY, 'ground')
+            throw new Error('Tileset "kenny_pixel-line-platformer" not found in tilemap. In Tiled, embed the tileset into the map and re-export.')
         }
 
-        this.platforms.create(500, 460, 'platform')
-        this.platforms.create(650, 340, 'platform')
-        this.platforms.create(250, 360, 'platform')
+        const groundLayer = this.tilemap.createLayer('Ground and Wall', tileset, 0, 0)
+        const platformLayer = this.tilemap.createLayer('Platforms', tileset, 0, 0)
 
-        this.player = this.physics.add.sprite(120, 520, 'playerIdle')
+        if (!groundLayer || !platformLayer)
+        {
+            throw new Error('Expected Tiled layers "Ground and Wall" and "Platforms" were not found in the tilemap.')
+        }
+
+        this.groundLayer = groundLayer
+        this.platformLayer = platformLayer
+
+        this.groundLayer.setCollisionByExclusion([-1], true)
+
+        this.platformLayer.setCollisionByExclusion([-1], true)
+        this.platformLayer.forEachTile((tile) =>
+        {
+            if (tile.index === -1)
+            {
+                return
+            }
+
+            tile.setCollision(false, false, true, false)
+        })
+
+        this.player = this.physics.add.sprite(64, this.levelHeightPx - 64, 'playerIdle')
+        if (this.player.body)
+        {
+            this.player.body.setSize(this.player.width, this.player.height, true)
+        }
 
         this.player.setCollideWorldBounds(true)
         this.player.setMaxVelocity(PLAYER_TUNING.maxVelocityX, PLAYER_TUNING.maxVelocityY)
         this.player.setDragX(PLAYER_TUNING.dragX)
         this.player.setAccelerationX(0)
 
-        this.cameras.main.setBounds(0, 0, LEVEL_BOUNDS.width, LEVEL_BOUNDS.height)
-        this.cameras.main.startFollow(this.player)
+        const worldCamera = this.cameras.main
+        worldCamera.setBounds(0, 0, this.levelWidthPx, this.levelHeightPx)
+        worldCamera.setZoom(WORLD_SCALE)
+        worldCamera.roundPixels = true
+        worldCamera.startFollow(this.player)
 
-        this.physics.add.collider(this.player, this.platforms)
+        this.physics.add.collider(this.player, this.groundLayer)
+        this.physics.add.collider(this.player, this.platformLayer)
 
-        const goalX = LEVEL_BOUNDS.width - 1000
-        const goalY = LEVEL_BOUNDS.height - 110
-        const goalW = 80
-        const goalH = 220
+        const goalW = 40
+        const goalH = 110
+        const goalX = this.levelWidthPx - goalW
+        const goalY = this.levelHeightPx - (goalH / 2) - 16
 
         this.goalZone = this.add.zone(goalX, goalY, goalW, goalH)
         this.physics.add.existing(this.goalZone, true)
 
-        this.add.rectangle(goalX, goalY, goalW, goalH, 0x2dff6c, 0.25)
+        const goalDebugRect = this.add.rectangle(goalX, goalY, goalW, goalH, 0x2dff6c, 0.25)
 
         this.physics.add.overlap(this.player, this.goalZone, this.handleFinish, undefined, this)
+
+        const uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height)
+        uiCamera.setScroll(0, 0)
+        uiCamera.setZoom(1)
+        uiCamera.roundPixels = true
+
+        worldCamera.ignore(this.hud.getGameObjects())
+        uiCamera.ignore([this.groundLayer, this.platformLayer, this.player, this.goalZone, goalDebugRect])
+        if (this.physics.world.debugGraphic)
+        {
+            uiCamera.ignore(this.physics.world.debugGraphic)
+        }
 
         this.game.loop.resetDelta()
 
@@ -147,7 +195,7 @@ export class PlatformerScene extends Phaser.Scene
 
         if (!this.isDead)
         {
-            if (this.player.y > LEVEL_BOUNDS.height + 100 || this.player.y < -100)
+            if (this.player.y > this.levelHeightPx + 100 || this.player.y < -100)
             {
                 this.handleDeath()
                 return
@@ -462,9 +510,13 @@ export class PlatformerScene extends Phaser.Scene
 
     private createPlaceholderTextures ()
     {
-        if (this.textures.exists('ground'))
+        const placeholderKeys = ['ground', 'platform', 'playerIdle', 'playerRun', 'playerJump'] as const
+        for (const key of placeholderKeys)
         {
-            return
+            if (this.textures.exists(key))
+            {
+                this.textures.remove(key)
+            }
         }
 
         const g = this.add.graphics()
@@ -480,18 +532,18 @@ export class PlatformerScene extends Phaser.Scene
         g.clear()
 
         g.fillStyle(0x2aa7ff, 1)
-        g.fillRect(0, 0, 32, 48)
-        g.generateTexture('playerIdle', 32, 48)
+        g.fillRect(0, 0, 8, 12)
+        g.generateTexture('playerIdle', 8, 12)
         g.clear()
 
         g.fillStyle(0x2dff6c, 1)
-        g.fillRect(0, 0, 32, 48)
-        g.generateTexture('playerRun', 32, 48)
+        g.fillRect(0, 0, 8, 12)
+        g.generateTexture('playerRun', 8, 12)
         g.clear()
 
         g.fillStyle(0xffd34d, 1)
-        g.fillRect(0, 0, 32, 48)
-        g.generateTexture('playerJump', 32, 48)
+        g.fillRect(0, 0, 8, 12)
+        g.generateTexture('playerJump', 8, 12)
         g.clear()
 
         g.destroy()
