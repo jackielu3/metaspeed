@@ -3,7 +3,7 @@ type TokenServerConfig = {
 }
 
 const production = 'https://metaspeed-tokenserver.babbage.systems'
-const local = 'http://localhost:3000'
+const local = 'https://2ae8a435e888.ngrok-free.app'
 
 const override = new URLSearchParams(window.location.search).get('tokenServer')
 

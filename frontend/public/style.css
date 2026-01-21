@@ -42,6 +42,27 @@ body {
     display: block;
 }
 
+#credits {
+    width: 100%;
+    padding: 10px 14px;
+    box-sizing: border-box;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(0, 0, 0, 0.92);
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+#credits a {
+    color: rgba(14, 195, 201, 0.95);
+    text-decoration: none;
+}
+
+#credits a:hover {
+    text-decoration: underline;
+}
+
 #overlay-root {
     width: 100%;
     display: flex;

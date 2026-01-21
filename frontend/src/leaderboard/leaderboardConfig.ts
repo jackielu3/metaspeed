@@ -1,4 +1,4 @@
-export const LEADERBOARD_ID = 'metaspeed-demo-1'
+export const LEADERBOARD_ID = 'metaspeed:scores'
 export const SIGNER_URL = 'https://peerjump-validator.babbage.systems'
 export const NETWORK_PRESET = 'mainnet' as const
 

@@ -86,7 +86,7 @@ export class PlatformerHud {
 
     this.leaderboardSubmitText = this.scene.add
       .text(
-        this.scene.scale.width / 2 - 130,
+        this.scene.scale.width / 2,
         this.scene.scale.height / 2 + 95,
         'Submit (Y)',
         {
@@ -98,14 +98,6 @@ export class PlatformerHud {
       .setScrollFactor(0)
       .setDepth(1000)
       .setVisible(false);
-
-    this.scene.scale.width / 2 + 130,
-      this.scene.scale.height / 2 + 95,
-      'Skip (N)',
-      {
-        color: '#000000',
-        fontSize: '18px',
-      };
 
     this.leaderboardStatusText = this.scene.add
       .text(this.scene.scale.width / 2, this.scene.scale.height / 2 + 140, '', {

@@ -8,6 +8,7 @@ export default defineConfig({
         react(),
     ],
     server: {
-        port: 8080
+        port: 8080,
+        allowedHosts: ['544379ca19a6.ngrok-free.app']
     }
 })

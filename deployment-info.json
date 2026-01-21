@@ -16,6 +16,25 @@
         "frontend"
       ],
       "frontendHostingMethod": "HTTPS"
+    },
+    {
+      "name": "metaspeed",
+      "provider": "CARS",
+      "CARSCloudURL": "https://cars.babbage.systems",
+      "projectID": "efe68ad6cfa3490fa7f6e9354e032d5f",
+      "network": "mainnet",
+      "deploy": [
+        "frontend"
+      ],
+      "frontendHostingMethod": "HTTPS"
+    },
+    {
+      "name": "Local LARS",
+      "network": "mainnet",
+      "provider": "LARS",
+      "run": [
+        "frontend"
+      ]
     }
   ]
 }
