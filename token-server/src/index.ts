@@ -82,6 +82,10 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next()
 })
 
+app.get('/health', async (_req: Request, res: Response) => {
+  return res.status(200).json({ ok: true })
+})
+
 const wallet = await getWallet()
 
 app.use(createAuthMiddleware({
@@ -107,10 +111,6 @@ app.use(createPaymentMiddleware({
     return admitted ? 0 : ENTRY_FEE_SATS
   }
 }))
-
-app.get('/health', async (_req: Request, res: Response) => {
-  return res.status(200).json({ ok: true })
-})
 
 app.post('/level/current', async (req: Request, res: Response) => {
   try {
