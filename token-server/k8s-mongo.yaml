@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: metaspeed-mongo
+  namespace: metaspeed
+spec:
+  selector:
+    app: metaspeed-mongo
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: 27017
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: metaspeed-mongo
+  namespace: metaspeed
+spec:
+  serviceName: metaspeed-mongo
+  replicas: 1
+  selector:
+    matchLabels:
+      app: metaspeed-mongo
+  template:
+    metadata:
+      labels:
+        app: metaspeed-mongo
+    spec:
+      containers:
+        - name: mongo
+          image: mongo:7
+          ports:
+            - containerPort: 27017
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi

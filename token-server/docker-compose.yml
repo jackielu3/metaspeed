@@ -1,0 +1,24 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: metaspeed-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  token-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: metaspeed-token-server
+    depends_on:
+      - mongo
+    env_file:
+      - .env
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  mongo_data:

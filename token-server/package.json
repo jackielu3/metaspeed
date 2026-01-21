@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node --loader ts-node/esm/transpile-only --max-http-header-size=10485760 src/index.ts",
+    "start:prod": "node --loader ts-node/esm/transpile-only --max-http-header-size=10485760 src/index.ts",
     "build": "tsc -b",
     "lint": "ts-standard --fix ."
   },

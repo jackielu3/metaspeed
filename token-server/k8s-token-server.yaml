@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: token-server-speed
+  namespace: metaspeed
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: token-server-speed
+  template:
+    metadata:
+      labels:
+        app: token-server-speed
+    spec:
+      containers:
+        - name: token-server-speed
+          image: localhost:32000/token-server-speed:954588f
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "3000"
+          envFrom:
+            - secretRef:
+                name: token-server-speed-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: token-server-speed
+  namespace: metaspeed
+spec:
+  selector:
+    app: token-server-speed
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+  type: ClusterIP
