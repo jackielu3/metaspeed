@@ -1,0 +1,51 @@
+{
+  "short_name": "metaspeed",
+  "name": "metaspeed",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#000000",
+  "background_color": "#ffffff",
+  "babbage": {
+    "groupPermissions": {
+      "protocolPermissions": [
+        {
+          "protocolID": [
+            2,
+            "server hmac"
+          ],
+          "counterparty": "self",
+          "description": "For nonce generation and HMAC creation"
+        },
+        {
+          "protocolID": [
+            2,
+            "contact"
+          ],
+          "counterparty": "self",
+          "description": "For contact management and encryption"
+        },
+        {
+          "protocolID": [
+            2,
+            "auth message signature"
+          ],
+          "counterparty": "0240d221d95f255c4bd67f9bdb83f29b54fbd2d0e0b8d124431c5b102fa0939b5d",
+          "description": "For mutual authentication with servers"
+        }
+      ],
+      "basketAccess": [
+        {
+          "basket": "contacts",
+          "description": "Access to \"contacts\""
+        }
+      ]
+    }
+  }
+}

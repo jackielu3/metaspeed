@@ -3,7 +3,7 @@ import { PlatformerScene } from './scenes/PlatformerScene'
 import { createRoot } from 'react-dom/client'
 import { OverlayRoot } from './tokenServer/OverlayRoot'
 
-const NO_WALLET_MODE = true
+const NO_WALLET_MODE = false
 ;(window as any).METASPEED_NO_WALLET_MODE = NO_WALLET_MODE
 
 const debug = new URLSearchParams(window.location.search).has('debug')

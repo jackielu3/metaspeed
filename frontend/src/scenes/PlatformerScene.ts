@@ -12,19 +12,38 @@ const STICKMAN_OUTPUT_SCALE = 1
 
 let stickmanTrimCache: { originY: number, pivotY: number } | null = null
 
-const LEVEL_KEY = 'level-0'
+const LEVEL_KEY = 'level-1'
 
 const playedCameraToursThisPageLoad = new Set<string>()
 
-const CAMERA_TOUR_PAN_DURATION_MS = 3000
-const CAMERA_TOUR_HOLD_MS = 500
+const CAMERA_TOUR_PAN_DURATION_MS = 9000
+const CAMERA_TOUR_FIRST_HOLD_MS = 400
+const CAMERA_TOUR_HOLD_MS = 0
+const CAMERA_TOUR_PAN_MIN_SEGMENT_MS = 0
+const CAMERA_TOUR_PAN_MAX_SEGMENT_MS = 9000
 
 const PLAYER_TUNING = {
-    accelX: 1400,
+    ground: {
+        accelX: 1400,
+        turnAccelX: 2000,
+        dragX: 900 * 4,
+        reverseThresholdVx: 20
+    },
+    air: {
+        accelX: 1200,
+        turnAccelX: 3000,
+        dragX: 900 * 5,
+        reverseThresholdVx: 20
+    },
     jumpVelocity: 800,
-    maxVelocityX: 720,
+    groundCoyoteTimeMs: 80,
+    jumpBufferMs: 80,
+    maxVelocityX: 740,
     maxVelocityY: 700,
-    dragX: 900 * 4,
+    jumpSpeedPenalty: {
+        pct: 0.05,
+        minSpeedPct: 0.9
+    },
     wallSlideMaxFallSpeed: 320,
     wallJumpVelocityX: 480,
     wallCoyoteTimeMs: 120
@@ -54,6 +73,7 @@ export class PlatformerScene extends Phaser.Scene
         right: Phaser.Input.Keyboard.Key
     }
     private restartKey!: Phaser.Input.Keyboard.Key
+    private pauseKey!: Phaser.Input.Keyboard.Key
     private jumpKey!: Phaser.Input.Keyboard.Key
     private submitKey!: Phaser.Input.Keyboard.Key
     private skipKey!: Phaser.Input.Keyboard.Key
@@ -78,12 +98,19 @@ export class PlatformerScene extends Phaser.Scene
     private leaderboardSubmitted = false
     private finishNonce = 0
 
+    private pauseMenuOpen = false
+    private pauseCountdownSeconds = 3
+    private pauseCountdownInput: string | null = null
+
     private noWalletMode = false
 
     private lastWallContactTime = -1
     private lastWallDir: -1 | 0 | 1 = 0
     private lastWallTouchTime = -1
     private lastWallTouchDir: -1 | 0 | 1 = 0
+
+    private lastGroundedTime = -1
+    private lastJumpPressedTime = -1
 
     private stickmanOriginY = 1
     private stickmanPivotY = STICKMAN_FRAME_H
@@ -100,7 +127,7 @@ export class PlatformerScene extends Phaser.Scene
 
     preload ()
     {
-        this.load.tilemapTiledJSON(LEVEL_KEY, 'assets/maps/level-0.tmj')
+        this.load.tilemapTiledJSON(LEVEL_KEY, 'assets/maps/level-1.tmj')
         this.load.image('kenny-tiles', 'assets/tiles/32x32-kenny_pixel-line-platformer-extruded.png')
 
         this.load.spritesheet('stickmanIdleRaw', 'assets/MoNsTeR12360_stickman/Idle/stickman_idle.png', { frameWidth: STICKMAN_FRAME_W, frameHeight: STICKMAN_FRAME_H })
@@ -112,6 +139,11 @@ export class PlatformerScene extends Phaser.Scene
 
     create ()
     {
+        this.finishNonce += 1
+        this.pauseMenuOpen = false
+        this.pauseCountdownInput = null
+        this.pauseCountdownSeconds = this.loadRestartCountdownSeconds()
+
         this.createStickmanAnimations()
 
         this.isDead = false
@@ -145,11 +177,18 @@ export class PlatformerScene extends Phaser.Scene
             right: Phaser.Input.Keyboard.KeyCodes.D
         }) as unknown as PlatformerScene['wasdKeys']
         this.restartKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC)
+        this.pauseKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P)
         this.jumpKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE)
         this.submitKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Y)
         this.skipKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.N)
 
         this.hud = new PlatformerHud(this)
+
+        this.input.keyboard.on('keydown', this.handlePauseMenuKeyDown, this)
+        this.events.once(Phaser.Scenes.Events.SHUTDOWN, () =>
+        {
+            this.input.keyboard?.off('keydown', this.handlePauseMenuKeyDown, this)
+        })
 
         this.tilemap = this.make.tilemap({ key: LEVEL_KEY })
         this.levelWidthPx = this.tilemap.widthInPixels
@@ -180,6 +219,37 @@ export class PlatformerScene extends Phaser.Scene
         this.platformLayer = platformLayer
 
         this.groundLayer.setCollisionByExclusion([-1], true)
+
+        this.groundLayer.forEachTile((tile) =>
+        {
+            if (tile.index === -1)
+            {
+                return
+            }
+
+            const collisionType = (tile.properties as unknown as { collisionType?: unknown }).collisionType
+            if (typeof collisionType !== 'string' || collisionType.length === 0)
+            {
+                return
+            }
+
+            if (collisionType === 'leftWall')
+            {
+                tile.setCollision(true, false, false, false)
+            }
+            else if (collisionType === 'rightWall')
+            {
+                tile.setCollision(false, true, false, false)
+            }
+            else if (collisionType === 'leftCorner')
+            {
+                tile.setCollision(true, false, true, false)
+            }
+            else if (collisionType === 'rightCorner')
+            {
+                tile.setCollision(false, true, true, false)
+            }
+        })
 
         this.platformLayer.setCollisionByExclusion([-1], true)
         this.platformLayer.forEachTile((tile) =>
@@ -213,7 +283,7 @@ export class PlatformerScene extends Phaser.Scene
 
         this.player.setCollideWorldBounds(true)
         this.player.setMaxVelocity(PLAYER_TUNING.maxVelocityX, PLAYER_TUNING.maxVelocityY)
-        this.player.setDragX(PLAYER_TUNING.dragX)
+        this.player.setDragX(PLAYER_TUNING.ground.dragX)
         this.player.setAccelerationX(0)
 
         const worldCamera = this.cameras.main
@@ -271,6 +341,8 @@ export class PlatformerScene extends Phaser.Scene
             {
                 this.introTourSkipped = true
 
+                this.hud.hideIntroSkipHint()
+
                 // Snap camera to player on skip
                 this.worldCamera.pan(this.player.x, this.player.y, 0, 'Linear', true)
             }
@@ -278,9 +350,24 @@ export class PlatformerScene extends Phaser.Scene
             return
         }
 
+        if (Phaser.Input.Keyboard.JustDown(this.pauseKey))
+        {
+            this.togglePauseMenu()
+        }
+
         if (Phaser.Input.Keyboard.JustDown(this.restartKey))
         {
+            this.finishNonce += 1
             this.scene.restart()
+            return
+        }
+
+        if (this.pauseMenuOpen)
+        {
+            if (this.runState === RunState.Running && this.runStartTimeMs >= 0)
+            {
+                this.hud.setTimerMs(this.time.now - this.runStartTimeMs)
+            }
             return
         }
 
@@ -338,6 +425,8 @@ export class PlatformerScene extends Phaser.Scene
         this.runStartTimeMs = -1
         this.finalTimeMs = -1
 
+        this.finishNonce += 1
+
         this.leaderboardPromptVisible = false
         this.leaderboardSubmitting = false
         this.leaderboardSubmitted = false
@@ -350,12 +439,19 @@ export class PlatformerScene extends Phaser.Scene
 
         this.countdownEvent?.destroy()
 
-        let remaining = 3
+        let remaining = Math.max(0, Math.floor(this.pauseCountdownSeconds))
+        if (remaining <= 0)
+        {
+            this.hud.hideCountdown()
+            this.beginRun()
+            return
+        }
+
         this.hud.showCountdown(remaining)
 
         this.countdownEvent = this.time.addEvent({
             delay: 1000,
-            repeat: 2,
+            repeat: Math.max(0, remaining - 1),
             callback: () =>
             {
                 remaining -= 1
@@ -393,6 +489,8 @@ export class PlatformerScene extends Phaser.Scene
         this.introTourActive = true
         this.introTourSkipped = false
 
+        this.hud.showIntroSkipHint()
+
         this.freezePlayer()
 
         worldCamera.stopFollow()
@@ -401,6 +499,8 @@ export class PlatformerScene extends Phaser.Scene
             .finally(() =>
             {
                 this.introTourActive = false
+
+                this.hud.hideIntroSkipHint()
 
                 worldCamera.startFollow(this.player)
                 this.game.loop.resetDelta()
@@ -475,36 +575,111 @@ export class PlatformerScene extends Phaser.Scene
 
     private async runIntroCameraTour (worldCamera: Phaser.Cameras.Scene2D.Camera, points: Array<{ x: number, y: number }>)
     {
-        for (const p of points)
+        if (points.length === 1)
         {
+            const panBudgetMs = Math.max(0, Math.floor(CAMERA_TOUR_PAN_DURATION_MS - (CAMERA_TOUR_FIRST_HOLD_MS + CAMERA_TOUR_HOLD_MS)))
+            const half = Math.max(0, Math.floor(panBudgetMs / 2))
+            const p = points[0]
+
+            if (!this.introTourSkipped && half > 0)
+            {
+                await this.panCameraTo(worldCamera, p.x, p.y, half)
+            }
+            if (this.introTourSkipped)
+            {
+                return
+            }
+            await this.delayMs(CAMERA_TOUR_FIRST_HOLD_MS)
             if (this.introTourSkipped)
             {
                 return
             }
 
-            await this.panCameraTo(worldCamera, p.x, p.y, CAMERA_TOUR_PAN_DURATION_MS)
+            if (half > 0)
+            {
+                await this.panCameraTo(worldCamera, this.player.x, this.player.y, half)
+            }
+            if (this.introTourSkipped)
+            {
+                return
+            }
+            await this.delayMs(CAMERA_TOUR_HOLD_MS)
+
+            return
+        }
+
+        const totalHoldMs = CAMERA_TOUR_FIRST_HOLD_MS + (points.length * CAMERA_TOUR_HOLD_MS)
+        const panBudgetMs = Math.max(0, Math.floor(CAMERA_TOUR_PAN_DURATION_MS - totalHoldMs))
+
+        const tourTargets = [...points, { x: this.player.x, y: this.player.y }]
+        const dists: number[] = []
+
+        let prevX = this.player.x
+        let prevY = this.player.y
+        for (const t of tourTargets)
+        {
+            dists.push(Phaser.Math.Distance.Between(prevX, prevY, t.x, t.y))
+            prevX = t.x
+            prevY = t.y
+        }
+
+        const durations = this.allocateTourPanDurationsMs(
+            dists,
+            panBudgetMs,
+            CAMERA_TOUR_PAN_MIN_SEGMENT_MS,
+            CAMERA_TOUR_PAN_MAX_SEGMENT_MS
+        )
+
+        let segIdx = 0
+        for (let pointIdx = 0; pointIdx < points.length; pointIdx += 1)
+        {
+            const p = points[pointIdx]
+            if (this.introTourSkipped)
+            {
+                return
+            }
+
+            const dist = dists[segIdx] ?? 0
+            const durationMs = durations[segIdx] ?? 0
+            segIdx += 1
+            if (durationMs > 0)
+            {
+                await this.panCameraTo(worldCamera, p.x, p.y, durationMs)
+            }
 
             if (this.introTourSkipped)
             {
                 return
             }
 
+            if (dist > 0)
+            {
+                const holdMs = pointIdx === 0 ? CAMERA_TOUR_FIRST_HOLD_MS : CAMERA_TOUR_HOLD_MS
+                await this.delayMs(holdMs)
+            }
+        }
+
+        if (this.introTourSkipped)
+        {
+            return
+        }
+
+        const dist = dists[segIdx] ?? 0
+        const durationMs = durations[segIdx] ?? 0
+        if (durationMs > 0)
+        {
+            await this.panCameraTo(worldCamera, this.player.x, this.player.y, durationMs)
+        }
+
+        if (this.introTourSkipped)
+        {
+            return
+        }
+
+        if (dist > 0)
+        {
             await this.delayMs(CAMERA_TOUR_HOLD_MS)
         }
-
-        if (this.introTourSkipped)
-        {
-            return
-        }
-
-        await this.panCameraTo(worldCamera, this.player.x, this.player.y, CAMERA_TOUR_PAN_DURATION_MS)
-
-        if (this.introTourSkipped)
-        {
-            return
-        }
-
-        await this.delayMs(CAMERA_TOUR_HOLD_MS)
     }
 
     private panCameraTo (camera: Phaser.Cameras.Scene2D.Camera, x: number, y: number, durationMs: number): Promise<void>
@@ -520,6 +695,181 @@ export class PlatformerScene extends Phaser.Scene
             camera.once(Phaser.Cameras.Scene2D.Events.PAN_COMPLETE, onComplete)
             camera.pan(x, y, durationMs, 'Linear', true)
         })
+    }
+
+    private allocateTourPanDurationsMs (dists: number[], totalMs: number, minPerSegmentMs: number, maxPerSegmentMs: number): number[]
+    {
+        const safeTotalMs = Math.max(0, Math.floor(totalMs))
+        if (dists.length === 0)
+        {
+            return []
+        }
+
+        const nonZeroIdx: number[] = []
+        for (let i = 0; i < dists.length; i += 1)
+        {
+            const d = dists[i]
+            if (Number.isFinite(d) && d > 0)
+            {
+                nonZeroIdx.push(i)
+            }
+        }
+
+        const durations = new Array(dists.length).fill(0)
+        if (safeTotalMs === 0 || nonZeroIdx.length === 0)
+        {
+            return durations
+        }
+
+        if (nonZeroIdx.length === 1)
+        {
+            durations[nonZeroIdx[0]] = safeTotalMs
+            return durations
+        }
+
+        let minMs = Math.max(0, Math.floor(minPerSegmentMs))
+        let maxMs = Math.max(0, Math.floor(maxPerSegmentMs))
+        if (!Number.isFinite(maxMs) || maxMs === 0)
+        {
+            maxMs = Number.POSITIVE_INFINITY
+        }
+
+        if (minMs * nonZeroIdx.length > safeTotalMs)
+        {
+            minMs = 0
+        }
+        if (Number.isFinite(maxMs) && maxMs * nonZeroIdx.length < safeTotalMs)
+        {
+            maxMs = Number.POSITIVE_INFINITY
+        }
+
+        const distSum = nonZeroIdx.reduce((acc, i) => acc + dists[i], 0)
+        if (distSum <= 0)
+        {
+            const each = Math.floor(safeTotalMs / nonZeroIdx.length)
+            let remainder = safeTotalMs - (each * nonZeroIdx.length)
+            for (const i of nonZeroIdx)
+            {
+                durations[i] = each + (remainder > 0 ? 1 : 0)
+                remainder = Math.max(0, remainder - 1)
+            }
+            return durations
+        }
+
+        const raw = new Array(dists.length).fill(0)
+        for (const i of nonZeroIdx)
+        {
+            raw[i] = (dists[i] / distSum) * safeTotalMs
+        }
+
+        const fixed = new Array(dists.length).fill(false)
+        const floats = new Array(dists.length).fill(0)
+        for (const i of nonZeroIdx)
+        {
+            floats[i] = raw[i]
+        }
+
+        while (true)
+        {
+            let changed = false
+            let fixedSum = 0
+            let unfixedRawSum = 0
+
+            for (const i of nonZeroIdx)
+            {
+                if (fixed[i])
+                {
+                    fixedSum += floats[i]
+                }
+                else
+                {
+                    unfixedRawSum += raw[i]
+                }
+            }
+
+            const remaining = safeTotalMs - fixedSum
+            if (remaining <= 0 || unfixedRawSum <= 0)
+            {
+                break
+            }
+
+            for (const i of nonZeroIdx)
+            {
+                if (!fixed[i])
+                {
+                    floats[i] = (raw[i] / unfixedRawSum) * remaining
+                }
+            }
+
+            for (const i of nonZeroIdx)
+            {
+                if (fixed[i])
+                {
+                    continue
+                }
+
+                if (floats[i] < minMs)
+                {
+                    floats[i] = minMs
+                    fixed[i] = true
+                    changed = true
+                }
+                else if (floats[i] > maxMs)
+                {
+                    floats[i] = maxMs
+                    fixed[i] = true
+                    changed = true
+                }
+            }
+
+            if (!changed)
+            {
+                break
+            }
+        }
+
+        const floors = new Array(dists.length).fill(0)
+        let floorSum = 0
+        const fracParts: Array<{ i: number, frac: number }> = []
+        for (const i of nonZeroIdx)
+        {
+            const f = Math.max(0, floats[i])
+            const fl = Math.floor(f)
+            floors[i] = fl
+            floorSum += fl
+            fracParts.push({ i, frac: f - fl })
+        }
+
+        fracParts.sort((a, b) => b.frac - a.frac)
+
+        let remainder = safeTotalMs - floorSum
+        for (let k = 0; k < fracParts.length && remainder > 0; k += 1)
+        {
+            const i = fracParts[k].i
+            floors[i] += 1
+            remainder -= 1
+        }
+
+        if (remainder < 0)
+        {
+            fracParts.sort((a, b) => a.frac - b.frac)
+            for (let k = 0; k < fracParts.length && remainder < 0; k += 1)
+            {
+                const i = fracParts[k].i
+                if (floors[i] > 0)
+                {
+                    floors[i] -= 1
+                    remainder += 1
+                }
+            }
+        }
+
+        for (const i of nonZeroIdx)
+        {
+            durations[i] = floors[i]
+        }
+
+        return durations
     }
 
     private getPlayerSpawnPoint (): { x: number, y: number } | null
@@ -659,6 +1009,98 @@ export class PlatformerScene extends Phaser.Scene
         }
     }
 
+    private togglePauseMenu ()
+    {
+        if (this.pauseMenuOpen)
+        {
+            this.closePauseMenu()
+        }
+        else
+        {
+            this.openPauseMenu()
+        }
+    }
+
+    private openPauseMenu ()
+    {
+        this.pauseMenuOpen = true
+        this.pauseCountdownInput = null
+        this.hud.showPauseMenu(this.pauseCountdownSeconds, this.pauseCountdownInput)
+        if (this.runState === RunState.Countdown && this.countdownEvent)
+        {
+            this.countdownEvent.paused = true
+        }
+        this.physics.world.pause()
+        this.player.anims.pause()
+    }
+
+    private closePauseMenu ()
+    {
+        this.pauseMenuOpen = false
+        this.pauseCountdownInput = null
+        this.hud.hidePauseMenu()
+        if (this.runState === RunState.Countdown && this.countdownEvent)
+        {
+            this.countdownEvent.paused = false
+        }
+        this.physics.world.resume()
+        this.player.anims.resume()
+        this.game.loop.resetDelta()
+    }
+
+    private handlePauseMenuKeyDown (event: KeyboardEvent)
+    {
+        if (!this.pauseMenuOpen)
+        {
+            return
+        }
+
+        if (event.key === 'Enter')
+        {
+            const raw = this.pauseCountdownInput
+            const parsed = raw && raw.length > 0 ? Number.parseInt(raw, 10) : this.pauseCountdownSeconds
+            const clamped = Number.isFinite(parsed) ? Math.max(0, Math.min(10, parsed)) : this.pauseCountdownSeconds
+            this.pauseCountdownSeconds = clamped
+            sessionStorage.setItem('metaspeed_restart_countdown_seconds', String(clamped))
+            this.pauseCountdownInput = null
+            this.hud.setPauseCountdownValue(this.pauseCountdownSeconds, this.pauseCountdownInput)
+            return
+        }
+
+        if (event.key === 'Backspace')
+        {
+            const current = this.pauseCountdownInput ?? String(this.pauseCountdownSeconds)
+            this.pauseCountdownInput = current.slice(0, Math.max(0, current.length - 1))
+            this.hud.setPauseCountdownValue(this.pauseCountdownSeconds, this.pauseCountdownInput)
+            return
+        }
+
+        if (event.key.length === 1 && event.key >= '0' && event.key <= '9')
+        {
+            const current = this.pauseCountdownInput ?? ''
+            const next = (current + event.key).slice(0, 2)
+            this.pauseCountdownInput = next
+            this.hud.setPauseCountdownValue(this.pauseCountdownSeconds, this.pauseCountdownInput)
+        }
+    }
+
+    private loadRestartCountdownSeconds (): number
+    {
+        const raw = sessionStorage.getItem('metaspeed_restart_countdown_seconds')
+        if (!raw)
+        {
+            return 3
+        }
+
+        const n = Number.parseInt(raw, 10)
+        if (!Number.isFinite(n))
+        {
+            return 3
+        }
+
+        return Math.max(0, Math.min(10, n))
+    }
+
     private skipLeaderboardSubmit ()
     {
         if (!this.leaderboardPromptVisible)
@@ -678,6 +1120,11 @@ export class PlatformerScene extends Phaser.Scene
             const top = await client.getTop(1)
 
             if (nonce !== this.finishNonce)
+            {
+                return
+            }
+
+            if (this.runState !== RunState.Finished)
             {
                 return
             }
@@ -715,6 +1162,11 @@ export class PlatformerScene extends Phaser.Scene
         catch
         {
             if (nonce !== this.finishNonce)
+            {
+                return
+            }
+
+            if (this.runState !== RunState.Finished)
             {
                 return
             }
@@ -838,6 +1290,7 @@ export class PlatformerScene extends Phaser.Scene
 
         if (onGround)
         {
+            this.lastGroundedTime = this.time.now
             this.movementState = MovementState.Grounded
             return
         }
@@ -857,7 +1310,7 @@ export class PlatformerScene extends Phaser.Scene
         {
             if (wallDir !== 0 && moveAxis === -wallDir)
             {
-                this.player.setAccelerationX(moveAxis * PLAYER_TUNING.accelX)
+                this.player.setAccelerationX(moveAxis * PLAYER_TUNING.air.turnAccelX)
                 return
             }
 
@@ -872,30 +1325,57 @@ export class PlatformerScene extends Phaser.Scene
             return
         }
 
+        const body = this.player.body as Phaser.Physics.Arcade.Body
+        const tuning = this.movementState === MovementState.Grounded ? PLAYER_TUNING.ground : PLAYER_TUNING.air
+
+        this.player.setDragX(tuning.dragX)
+
         if (moveAxis === 0)
         {
             this.player.setAccelerationX(0)
             return
         }
 
-        this.player.setAccelerationX(moveAxis * PLAYER_TUNING.accelX)
+        const vx = body.velocity.x
+        const reversing = (vx * moveAxis) < 0 && Math.abs(vx) > tuning.reverseThresholdVx
+        const accelX = reversing ? tuning.turnAccelX : tuning.accelX
+
+        this.player.setAccelerationX(moveAxis * accelX)
     }
 
     private applyJump (wallDir: -1 | 0 | 1)
     {
-        if (!this.isJumpJustDown())
+        const now = this.time.now
+
+        if (this.isJumpJustDown())
+        {
+            this.lastJumpPressedTime = now
+        }
+
+        const bufferedJumpOk = this.lastJumpPressedTime >= 0 && (now - this.lastJumpPressedTime) <= PLAYER_TUNING.jumpBufferMs
+        if (!bufferedJumpOk)
         {
             return
         }
 
-        if (this.movementState === MovementState.Grounded)
+        const groundCoyoteOk = this.lastGroundedTime >= 0 && (now - this.lastGroundedTime) <= PLAYER_TUNING.groundCoyoteTimeMs
+
+        if (this.movementState === MovementState.Grounded || (groundCoyoteOk && wallDir === 0))
         {
+            const body = this.player.body as Phaser.Physics.Arcade.Body
+            const maxVx = PLAYER_TUNING.maxVelocityX
+            const minPenaltySpeed = maxVx * PLAYER_TUNING.jumpSpeedPenalty.minSpeedPct
+            if (Math.abs(body.velocity.x) >= minPenaltySpeed)
+            {
+                this.player.setVelocityX(body.velocity.x * (1 - PLAYER_TUNING.jumpSpeedPenalty.pct))
+            }
+
             this.player.setVelocityY(-PLAYER_TUNING.jumpVelocity)
             this.movementState = MovementState.Airborne
+            this.lastJumpPressedTime = -1
             return
         }
 
-        const now = this.time.now
         const coyoteOk = this.lastWallContactTime >= 0 && (now - this.lastWallContactTime) <= PLAYER_TUNING.wallCoyoteTimeMs
         const jumpWallDir = wallDir !== 0 ? wallDir : (coyoteOk ? this.lastWallDir : 0)
 
@@ -907,6 +1387,7 @@ export class PlatformerScene extends Phaser.Scene
             this.player.setVelocityY(-PLAYER_TUNING.jumpVelocity)
 
             this.movementState = MovementState.Airborne
+            this.lastJumpPressedTime = -1
         }
     }
 

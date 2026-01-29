@@ -6,12 +6,23 @@ export class PlatformerHud {
   private deathText: Phaser.GameObjects.Text;
   private countdownText: Phaser.GameObjects.Text;
   private timerText: Phaser.GameObjects.Text;
+  private introSkipText: Phaser.GameObjects.Text;
   private finishText: Phaser.GameObjects.Text;
 
   private leaderboardTopText: Phaser.GameObjects.Text;
   private leaderboardPromptText: Phaser.GameObjects.Text;
   private leaderboardSubmitText: Phaser.GameObjects.Text;
   private leaderboardStatusText: Phaser.GameObjects.Text;
+
+  private pauseBg: Phaser.GameObjects.Rectangle;
+  private pausePanel: Phaser.GameObjects.Rectangle;
+  private pauseTitleText: Phaser.GameObjects.Text;
+  private pauseCountdownLabelText: Phaser.GameObjects.Text;
+  private pauseCountdownValueText: Phaser.GameObjects.Text;
+  private pauseCountdownHelpText: Phaser.GameObjects.Text;
+  private pauseMainMenuText: Phaser.GameObjects.Text;
+  private pauseCloseText: Phaser.GameObjects.Text;
+  private pauseContainer: Phaser.GameObjects.Container;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -20,7 +31,7 @@ export class PlatformerHud {
       .text(
         this.scene.scale.width / 2,
         this.scene.scale.height / 2,
-        'Press ESC to restart',
+        'Press ESC to restart\nPress P for settings',
         {
           color: '#ff3b3b',
           fontSize: '24px',
@@ -45,6 +56,16 @@ export class PlatformerHud {
       .text(this.scene.scale.width - 16, 16, '0:00.000', {
         color: '#000000',
         fontSize: '18px',
+      })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(1000)
+      .setVisible(false);
+
+    this.introSkipText = this.scene.add
+      .text(this.scene.scale.width - 16, 40, 'Space to skip', {
+        color: '#000000',
+        fontSize: '14px',
       })
       .setOrigin(1, 0)
       .setScrollFactor(0)
@@ -109,6 +130,103 @@ export class PlatformerHud {
       .setScrollFactor(0)
       .setDepth(1000)
       .setVisible(false);
+
+    const w = this.scene.scale.width
+    const h = this.scene.scale.height
+
+    this.pauseBg = this.scene.add
+      .rectangle(0, 0, w, h, 0x000000, 0.6)
+      .setOrigin(0)
+      .setScrollFactor(0)
+      .setDepth(1100)
+      .setVisible(false)
+
+    this.pausePanel = this.scene.add
+      .rectangle(w / 2, h / 2, Math.min(520, w - 40), Math.min(360, h - 40), 0xffffff, 0.95)
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1100)
+      .setVisible(false)
+
+    this.pauseTitleText = this.scene.add
+      .text(w / 2, h / 2 - 140, 'Paused', {
+        color: '#000000',
+        fontSize: '28px',
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1100)
+      .setVisible(false)
+
+    this.pauseCountdownLabelText = this.scene.add
+      .text(w / 2, h / 2 - 70, 'Restart countdown (0-10 seconds):', {
+        color: '#000000',
+        fontSize: '18px',
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1100)
+      .setVisible(false)
+
+    this.pauseCountdownValueText = this.scene.add
+      .text(w / 2, h / 2 - 35, '0', {
+        color: '#0ec3c9',
+        fontSize: '22px',
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1100)
+      .setVisible(false)
+
+    this.pauseCountdownHelpText = this.scene.add
+      .text(w / 2, h / 2 + 5, 'Type a number and press Enter to save', {
+        color: '#000000',
+        fontSize: '14px',
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1100)
+      .setVisible(false)
+
+    this.pauseMainMenuText = this.scene.add
+      .text(w / 2, h / 2 + 70, 'Main Menu (No main menu... yet ehe...)', {
+        color: '#000000',
+        fontSize: '18px',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1100)
+      .setVisible(false)
+      .setInteractive({ useHandCursor: true })
+
+    this.pauseCloseText = this.scene.add
+      .text(w / 2, h / 2 + 120, 'Press P to close', {
+        color: '#000000',
+        fontSize: '16px',
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1100)
+      .setVisible(false)
+
+    this.pauseContainer = this.scene.add
+      .container(0, 0, [
+        this.pauseBg,
+        this.pausePanel,
+        this.pauseTitleText,
+        this.pauseCountdownLabelText,
+        this.pauseCountdownValueText,
+        this.pauseCountdownHelpText,
+        this.pauseMainMenuText,
+        this.pauseCloseText,
+      ])
+      .setDepth(1100)
+      .setVisible(false)
   }
 
   showDeathPrompt() {
@@ -135,6 +253,14 @@ export class PlatformerHud {
     this.timerText.setVisible(false);
   }
 
+  showIntroSkipHint() {
+    this.introSkipText.setVisible(true);
+  }
+
+  hideIntroSkipHint() {
+    this.introSkipText.setVisible(false);
+  }
+
   setTimerMs(elapsedMs: number) {
     this.timerText.setText(this.formatTimeMs(elapsedMs));
   }
@@ -142,8 +268,41 @@ export class PlatformerHud {
   showFinish(finalTimeMs: number) {
     const formatted = this.formatTimeMs(finalTimeMs);
     this.finishText
-      .setText(`Finished!\nTime: ${formatted}\n\nPress ESC to retry`)
+      .setText(`Finished!\nTime: ${formatted}\n\nPress ESC to retry\nPress P for settings`)
       .setVisible(true);
+  }
+
+  showPauseMenu(countdownSeconds: number, inputText: string | null) {
+    const value = inputText && inputText.length > 0 ? inputText : String(countdownSeconds)
+    this.pauseCountdownValueText.setText(value)
+
+    this.pauseBg.setVisible(true)
+    this.pausePanel.setVisible(true)
+    this.pauseTitleText.setVisible(true)
+    this.pauseCountdownLabelText.setVisible(true)
+    this.pauseCountdownValueText.setVisible(true)
+    this.pauseCountdownHelpText.setVisible(true)
+    this.pauseMainMenuText.setVisible(true)
+    this.pauseCloseText.setVisible(true)
+    this.pauseContainer.setVisible(true)
+  }
+
+  hidePauseMenu() {
+    this.pauseContainer.setVisible(false)
+    this.pauseBg.setVisible(false)
+    this.pausePanel.setVisible(false)
+    this.pauseTitleText.setVisible(false)
+    this.pauseCountdownLabelText.setVisible(false)
+    this.pauseCountdownValueText.setVisible(false)
+    this.pauseCountdownHelpText.setVisible(false)
+    this.pauseMainMenuText.disableInteractive().setVisible(false)
+    this.pauseMainMenuText.setInteractive({ useHandCursor: true })
+    this.pauseCloseText.setVisible(false)
+  }
+
+  setPauseCountdownValue(countdownSeconds: number, inputText: string | null) {
+    const value = inputText && inputText.length > 0 ? inputText : String(countdownSeconds)
+    this.pauseCountdownValueText.setText(value)
   }
 
   showFinishLeaderboardControls(
@@ -216,11 +375,13 @@ export class PlatformerHud {
       this.deathText,
       this.countdownText,
       this.timerText,
+      this.introSkipText,
       this.finishText,
       this.leaderboardTopText,
       this.leaderboardPromptText,
       this.leaderboardSubmitText,
       this.leaderboardStatusText,
+      this.pauseContainer,
     ];
   }
 

@@ -30,7 +30,7 @@
     "dependencies": {
         "@babbage/go": "^0.1.14",
         "@bsv/sdk": "^1.8.4",
-        "@leaderlib/client": "^0.1.3",
+        "@leaderlib/client": "^0.1.4",
         "phaser": "^3.90.0",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
