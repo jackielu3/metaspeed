@@ -117,6 +117,10 @@ export function LeaderboardOverlay() {
     }, [client])
 
     useEffect(() => {
+        if ((window as any).METASPEED_NO_WALLET_MODE === true) {
+            return
+        }
+
         const identityKeys = rows
             .map((r) => r.playerId)
             .filter((id): id is string => !!id && isLikelyIdentityKey(id))

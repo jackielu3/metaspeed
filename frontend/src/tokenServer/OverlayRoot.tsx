@@ -1,6 +1,10 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { LeaderboardOverlay } from '../leaderboard/LeaderboardOverlay'
-import { TokenOverlay } from './TokenOverlay'
+
+const TokenOverlay = lazy(async () => {
+    const m = await import('./TokenOverlay')
+    return { default: m.TokenOverlay }
+})
 
 type Props = {
     startGame: () => void
@@ -9,6 +13,8 @@ type Props = {
 export function OverlayRoot({ startGame }: Props)
 {
     const [admitted, setAdmitted] = useState(false)
+
+    const noWalletMode = (window as any).METASPEED_NO_WALLET_MODE === true
 
     const [canvasWidth, setCanvasWidth] = useState<number | null>(null)
 
@@ -60,10 +66,15 @@ export function OverlayRoot({ startGame }: Props)
     }, [])
 
     useEffect(() => {
+        if (noWalletMode) {
+            startGame()
+            return
+        }
+
         if (admitted) {
             startGame()
         }
-    }, [admitted, startGame])
+    }, [admitted, noWalletMode, startGame])
 
     const widthStyle = canvasWidth ? { width: `${canvasWidth}px` } : { width: '100%' }
 
@@ -75,7 +86,11 @@ export function OverlayRoot({ startGame }: Props)
             flexDirection: 'column',
             alignItems: 'stretch'
         }}>
-            <TokenOverlay onAdmitted={() => setAdmitted(true)} />
+            {!noWalletMode && (
+                <Suspense fallback={null}>
+                    <TokenOverlay onAdmitted={() => setAdmitted(true)} />
+                </Suspense>
+            )}
             <LeaderboardOverlay />
         </div>
     )

@@ -1,8 +1,7 @@
-import { IdentityClient, WalletClient } from '@bsv/sdk'
 import type { DisplayableIdentity } from '@bsv/sdk'
 
 const identityCache = new Map<string, DisplayableIdentity | null>()
-let identityClient: IdentityClient | null = null
+let identityClient: any | null = null
 
 export function shortenIdentityKey(key: string): string {
     if (key.length <= 12) {
@@ -17,6 +16,10 @@ export function isLikelyIdentityKey(str: string): boolean {
 }
 
 export async function resolveIdentityKey(identityKey: string): Promise<DisplayableIdentity | null> {
+    if ((window as any).METASPEED_NO_WALLET_MODE === true) {
+        return null
+    }
+
     if (!isLikelyIdentityKey(identityKey)) {
         return null
     }
@@ -26,6 +29,7 @@ export async function resolveIdentityKey(identityKey: string): Promise<Displayab
     }
 
     if (!identityClient) {
+        const { IdentityClient, WalletClient } = await import('@bsv/sdk')
         identityClient = new IdentityClient(new WalletClient())
     }
 

@@ -2,8 +2,8 @@ type TokenServerConfig = {
     tokenServer: string
 }
 
-const production = 'https://metaspeed-tokenserver.babbage.systems'
-const local = 'https://2ae8a435e888.ngrok-free.app'
+const production = 'https://speed-token-server.metanet-games.com'
+const local = 'https://speed-token-server.metanet-games.com'
 
 const override = new URLSearchParams(window.location.search).get('tokenServer')
 

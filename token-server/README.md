@@ -23,7 +23,7 @@ stringData:
   # App
   BSV_NETWORK: "mainnet"
   WALLET_STORAGE_URL: "https://storage.babbage.systems"
-  SERVER_PRIVATE_KEY: "REPLACE_WITH_YOUR_PRIVATE_KEY_HEX"
+  SERVER_PRIVATE_KEY: "e7a34be7651e7d290186ab2a91c0b3e1220175f0cb5af12b6889f86bfc60a4a2"
 
   # MongoDB
   MONGO_URI: "mongodb://metaspeed-mongo:27017"
@@ -98,6 +98,8 @@ spec:
       labels:
         app: metaspeed-token-server
     spec:
+      nodeSelector:
+        kubernetes.io/hostname: server2
       containers:
         - name: token-server
           image: metaspeed-token-server:local
@@ -145,7 +147,7 @@ metadata:
   name: metaspeed-token-server-ing
   namespace: metaspeed
   annotations:
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
 spec:
   ingressClassName: nginx
   rules:
@@ -182,13 +184,36 @@ YAML
 
 # Apply
 microk8s kubectl apply -f metaspeed-token-server.yaml
+microk8s kubectl -n metaspeed rollout restart deploy/metaspeed-token-server
 
 
 # Verify
 microk8s kubectl -n metaspeed get pods
+microk8s kubectl -n metaspeed get pods -o wide
 microk8s kubectl -n metaspeed logs deploy/metaspeed-token-server --tail=200
 microk8s kubectl -n metaspeed run curltest --rm -it --image=curlimages/curl -- \
   curl -sS http://metaspeed-token-server/health
 
+
+# Cert status
+NS=metaspeed
+microk8s kubectl -n "$NS" get certificate,certificaterequest,order,challenge
+
+
+# If cert is stuck pending, kick it
+microk8s kubectl -n "$NS" delete challenge,order,certificaterequest -l cert-manager.io/certificate-name=metaspeed-token-server-tls --ignore-not-found
+microk8s kubectl -n "$NS" delete certificate metaspeed-token-server-tls --ignore-not-found
+microk8s kubectl -n "$NS" delete secret metaspeed-token-server-tls --ignore-not-found
+microk8s kubectl apply -f metaspeed-token-server.yaml
+
+
+# Watch cert issuance (run one at a time)
+microk8s kubectl -n "$NS" get certificate -w
+microk8s kubectl -n "$NS" get challenge -w
+
 # External
 curl -sS https://speed-token-server.metanet-games.com/health
+
+
+# After the cert is READY=True, re-enable https redirect
+microk8s kubectl -n metaspeed annotate ingress metaspeed-token-server-ing nginx.ingress.kubernetes.io/ssl-redirect="true" --overwrite

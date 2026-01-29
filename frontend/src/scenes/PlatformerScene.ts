@@ -1,8 +1,6 @@
 import Phaser from 'phaser'
 import { PlatformerHud } from './PlatformerHud'
 import { LeaderLibClient } from '@leaderlib/client'
-import { WalletClient } from '@bsv/sdk'
-import BabbageGo from '@babbage/go'
 import { LEADERBOARD_ID, SIGNER_URL, NETWORK_PRESET, DEVELOPER_IDENTITY, SUBMIT_FEE_SATS } from '../leaderboard/leaderboardConfig'
 import { resolveIdentityKey, shortenIdentityKey } from '../leaderboard/identity'
 
@@ -13,6 +11,13 @@ const STICKMAN_FRAME_H = 80
 const STICKMAN_OUTPUT_SCALE = 1
 
 let stickmanTrimCache: { originY: number, pivotY: number } | null = null
+
+const LEVEL_KEY = 'level-0'
+
+const playedCameraToursThisPageLoad = new Set<string>()
+
+const CAMERA_TOUR_PAN_DURATION_MS = 3000
+const CAMERA_TOUR_HOLD_MS = 500
 
 const PLAYER_TUNING = {
     accelX: 1400,
@@ -42,6 +47,12 @@ enum RunState
 export class PlatformerScene extends Phaser.Scene
 {
     private cursors!: Phaser.Types.Input.Keyboard.CursorKeys
+    private wasdKeys!: {
+        up: Phaser.Input.Keyboard.Key
+        down: Phaser.Input.Keyboard.Key
+        left: Phaser.Input.Keyboard.Key
+        right: Phaser.Input.Keyboard.Key
+    }
     private restartKey!: Phaser.Input.Keyboard.Key
     private jumpKey!: Phaser.Input.Keyboard.Key
     private submitKey!: Phaser.Input.Keyboard.Key
@@ -53,6 +64,7 @@ export class PlatformerScene extends Phaser.Scene
     private levelWidthPx = 0
     private levelHeightPx = 0
     private hud!: PlatformerHud
+    private worldCamera!: Phaser.Cameras.Scene2D.Camera
     private isDead = false
     private movementState: MovementState = MovementState.Airborne
 
@@ -66,6 +78,8 @@ export class PlatformerScene extends Phaser.Scene
     private leaderboardSubmitted = false
     private finishNonce = 0
 
+    private noWalletMode = false
+
     private lastWallContactTime = -1
     private lastWallDir: -1 | 0 | 1 = 0
     private lastWallTouchTime = -1
@@ -76,6 +90,9 @@ export class PlatformerScene extends Phaser.Scene
 
     private lastPlayedAnimKey: string | null = null
 
+    private introTourActive = false
+    private introTourSkipped = false
+
     constructor ()
     {
         super('PlatformerScene')
@@ -83,8 +100,8 @@ export class PlatformerScene extends Phaser.Scene
 
     preload ()
     {
-        this.load.tilemapTiledJSON('level-0', 'assets/maps/level-0.tmj')
-        this.load.image('kenny-tiles', 'assets/tiles/32x32-kenny_pixel-line-platformer.png')
+        this.load.tilemapTiledJSON(LEVEL_KEY, 'assets/maps/level-0.tmj')
+        this.load.image('kenny-tiles', 'assets/tiles/32x32-kenny_pixel-line-platformer-extruded.png')
 
         this.load.spritesheet('stickmanIdleRaw', 'assets/MoNsTeR12360_stickman/Idle/stickman_idle.png', { frameWidth: STICKMAN_FRAME_W, frameHeight: STICKMAN_FRAME_H })
         this.load.spritesheet('stickmanRunRaw', 'assets/MoNsTeR12360_stickman/Running/stickman_running.png', { frameWidth: STICKMAN_FRAME_W, frameHeight: STICKMAN_FRAME_H })
@@ -98,6 +115,8 @@ export class PlatformerScene extends Phaser.Scene
         this.createStickmanAnimations()
 
         this.isDead = false
+
+        this.noWalletMode = (window as any).METASPEED_NO_WALLET_MODE === true
 
         // Handle window focus/blur events to pause/resume the game
         this.game.events.on(Phaser.Core.Events.BLUR, this.handleBlur, this)
@@ -119,6 +138,12 @@ export class PlatformerScene extends Phaser.Scene
         }
 
         this.cursors = this.input.keyboard.createCursorKeys()
+        this.wasdKeys = this.input.keyboard.addKeys({
+            up: Phaser.Input.Keyboard.KeyCodes.W,
+            down: Phaser.Input.Keyboard.KeyCodes.S,
+            left: Phaser.Input.Keyboard.KeyCodes.A,
+            right: Phaser.Input.Keyboard.KeyCodes.D
+        }) as unknown as PlatformerScene['wasdKeys']
         this.restartKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC)
         this.jumpKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE)
         this.submitKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Y)
@@ -126,15 +151,15 @@ export class PlatformerScene extends Phaser.Scene
 
         this.hud = new PlatformerHud(this)
 
-        this.tilemap = this.make.tilemap({ key: 'level-0' })
+        this.tilemap = this.make.tilemap({ key: LEVEL_KEY })
         this.levelWidthPx = this.tilemap.widthInPixels
         this.levelHeightPx = this.tilemap.heightInPixels
 
         this.physics.world.setBounds(0, 0, this.levelWidthPx, this.levelHeightPx)
         this.physics.world.setBoundsCollision(true, true, false, false)
 
-        const tileset = this.tilemap.addTilesetImage('32x32-kenny_pixel-line-platformer', 'kenny-tiles', 32, 32, 0, 0, 1)
-            ?? this.tilemap.addTilesetImage('kenny_pixel-line-platformer', 'kenny-tiles', 32, 32, 0, 0, 1)
+        const tileset = this.tilemap.addTilesetImage('32x32-kenny_pixel-line-platformer', 'kenny-tiles', 32, 32, 1, 2, 1)
+            ?? this.tilemap.addTilesetImage('kenny_pixel-line-platformer', 'kenny-tiles', 32, 32, 1, 2, 1)
         if (!tileset)
         {
             throw new Error('Tileset "kenny_pixel-line-platformer" not found in tilemap. In Tiled, embed the tileset into the map and re-export.')
@@ -167,10 +192,9 @@ export class PlatformerScene extends Phaser.Scene
             tile.setCollision(false, false, true, false)
         })
 
-        const spawnTilesX = 8
-        const spawnTilesFromBottom = 8
-        const spawnX = spawnTilesX * this.tilemap.tileWidth
-        const spawnY = this.levelHeightPx - (spawnTilesFromBottom * this.tilemap.tileHeight)
+        const spawnPoint = this.getPlayerSpawnPoint()
+        const spawnX = spawnPoint?.x ?? (8 * this.tilemap.tileWidth)
+        const spawnY = spawnPoint?.y ?? (this.levelHeightPx - (8 * this.tilemap.tileHeight))
 
         this.player = this.physics.add.sprite(spawnX, spawnY, 'stickman_idle_0')
         this.player.setOrigin(0.5, this.stickmanOriginY)
@@ -193,10 +217,11 @@ export class PlatformerScene extends Phaser.Scene
         this.player.setAccelerationX(0)
 
         const worldCamera = this.cameras.main
-        worldCamera.setBounds(0, 0, this.levelWidthPx, this.levelHeightPx)
-        worldCamera.setZoom(WORLD_SCALE)
-        worldCamera.roundPixels = true
-        worldCamera.startFollow(this.player)
+        this.worldCamera = worldCamera
+        this.worldCamera.setBounds(0, 0, this.levelWidthPx, this.levelHeightPx)
+        this.worldCamera.setZoom(WORLD_SCALE)
+        this.worldCamera.roundPixels = true
+        this.worldCamera.startFollow(this.player)
 
         this.physics.add.collider(this.player, this.groundLayer)
         this.physics.add.collider(this.player, this.platformLayer)
@@ -220,7 +245,7 @@ export class PlatformerScene extends Phaser.Scene
         uiCamera.setZoom(1)
         uiCamera.roundPixels = true
 
-        worldCamera.ignore(this.hud.getGameObjects())
+        this.worldCamera.ignore(this.hud.getGameObjects())
 
         const uiIgnore: Phaser.GameObjects.GameObject[] = [this.groundLayer, this.platformLayer, victoryLayer, this.player]
         if (decorationLayer)
@@ -235,11 +260,24 @@ export class PlatformerScene extends Phaser.Scene
 
         this.game.loop.resetDelta()
 
-        this.startCountdown()
+        this.startIntroCameraTourIfNeeded(this.worldCamera)
     }
 
     update ()
     {
+        if (this.introTourActive)
+        {
+            if (!this.introTourSkipped && Phaser.Input.Keyboard.JustDown(this.jumpKey))
+            {
+                this.introTourSkipped = true
+
+                // Snap camera to player on skip
+                this.worldCamera.pan(this.player.x, this.player.y, 0, 'Linear', true)
+            }
+
+            return
+        }
+
         if (Phaser.Input.Keyboard.JustDown(this.restartKey))
         {
             this.scene.restart()
@@ -335,6 +373,194 @@ export class PlatformerScene extends Phaser.Scene
         })
     }
 
+    private startIntroCameraTourIfNeeded (worldCamera: Phaser.Cameras.Scene2D.Camera)
+    {
+        if (playedCameraToursThisPageLoad.has(LEVEL_KEY))
+        {
+            this.startCountdown()
+            return
+        }
+
+        const points = this.getCameraTourPoints()
+        if (!points)
+        {
+            this.startCountdown()
+            return
+        }
+
+        playedCameraToursThisPageLoad.add(LEVEL_KEY)
+
+        this.introTourActive = true
+        this.introTourSkipped = false
+
+        this.freezePlayer()
+
+        worldCamera.stopFollow()
+
+        void this.runIntroCameraTour(worldCamera, points)
+            .finally(() =>
+            {
+                this.introTourActive = false
+
+                worldCamera.startFollow(this.player)
+                this.game.loop.resetDelta()
+
+                this.startCountdown()
+            })
+    }
+
+    private getCameraTourPoints (): Array<{ x: number, y: number }> | null
+    {
+        const layer = this.tilemap.getObjectLayer('Camera Tour')
+        if (!layer)
+        {
+            return null
+        }
+
+        const objs = (layer.objects ?? []).slice()
+
+        const start = objs.find(o => (o.name ?? '').toLowerCase() === 'start')
+
+        if (!start)
+        {
+            return null
+        }
+
+        const extras = objs
+            .filter(o => o !== start && (o.name ?? '').toLowerCase() !== 'end')
+            .map(o => ({ o, order: this.getTiledObjectOrder(o) }))
+            .sort((a, b) => a.order - b.order)
+            .map(({ o }) => o)
+
+        const ordered = [start, ...extras]
+
+        return ordered.map(o =>
+        {
+            const x = o.x ?? 0
+            const y = o.y ?? 0
+            const w = o.width ?? 0
+            const h = o.height ?? 0
+            const cx = w > 0 ? x + (w / 2) : x
+            const cy = h > 0 ? y + (h / 2) : y
+            return { x: cx, y: cy }
+        })
+    }
+
+    private getTiledObjectOrder (o: Phaser.Types.Tilemaps.TiledObject): number
+    {
+        const name = (o.name ?? '').toLowerCase()
+
+        const props: unknown = (o as unknown as { properties?: Array<{ name: string, value: unknown }> }).properties
+        if (Array.isArray(props))
+        {
+            const orderProp = props.find(p => p.name === 'order')
+            if (orderProp && typeof orderProp.value === 'number')
+            {
+                return orderProp.value
+            }
+        }
+
+        const m = name.match(/(\d+)/)
+        if (m)
+        {
+            const n = Number.parseInt(m[1], 10)
+            if (Number.isFinite(n))
+            {
+                return n
+            }
+        }
+
+        return 9999
+    }
+
+    private async runIntroCameraTour (worldCamera: Phaser.Cameras.Scene2D.Camera, points: Array<{ x: number, y: number }>)
+    {
+        for (const p of points)
+        {
+            if (this.introTourSkipped)
+            {
+                return
+            }
+
+            await this.panCameraTo(worldCamera, p.x, p.y, CAMERA_TOUR_PAN_DURATION_MS)
+
+            if (this.introTourSkipped)
+            {
+                return
+            }
+
+            await this.delayMs(CAMERA_TOUR_HOLD_MS)
+        }
+
+        if (this.introTourSkipped)
+        {
+            return
+        }
+
+        await this.panCameraTo(worldCamera, this.player.x, this.player.y, CAMERA_TOUR_PAN_DURATION_MS)
+
+        if (this.introTourSkipped)
+        {
+            return
+        }
+
+        await this.delayMs(CAMERA_TOUR_HOLD_MS)
+    }
+
+    private panCameraTo (camera: Phaser.Cameras.Scene2D.Camera, x: number, y: number, durationMs: number): Promise<void>
+    {
+        return new Promise(resolve =>
+        {
+            const onComplete = () =>
+            {
+                camera.off(Phaser.Cameras.Scene2D.Events.PAN_COMPLETE, onComplete)
+                resolve()
+            }
+
+            camera.once(Phaser.Cameras.Scene2D.Events.PAN_COMPLETE, onComplete)
+            camera.pan(x, y, durationMs, 'Linear', true)
+        })
+    }
+
+    private getPlayerSpawnPoint (): { x: number, y: number } | null
+    {
+        const layer = this.tilemap.getObjectLayer('Spawn')
+            ?? this.tilemap.getObjectLayer('Spawns')
+            ?? this.tilemap.getObjectLayer('Objects')
+
+        if (!layer)
+        {
+            return null
+        }
+
+        const spawnObj = (layer.objects ?? []).find(o =>
+        {
+            const name = (o.name ?? '').toLowerCase()
+            return name === 'playerspawn'
+        })
+
+        if (!spawnObj)
+        {
+            return null
+        }
+
+        const x = spawnObj.x ?? 0
+        const y = spawnObj.y ?? 0
+        const w = spawnObj.width ?? 0
+        const h = spawnObj.height ?? 0
+        const cx = w > 0 ? x + (w / 2) : x
+        const cy = h > 0 ? y + (h / 2) : y
+        return { x: cx, y: cy }
+    }
+
+    private delayMs (ms: number): Promise<void>
+    {
+        return new Promise(resolve =>
+        {
+            this.time.delayedCall(ms, () => resolve())
+        })
+    }
+
     private beginRun ()
     {
         this.runState = RunState.Running
@@ -369,17 +595,35 @@ export class PlatformerScene extends Phaser.Scene
 
         const nonce = ++this.finishNonce
 
-        this.hud.showFinishLeaderboardControls(
-            SUBMIT_FEE_SATS,
-            () =>
-            {
-                this.submitToLeaderboard()
-            },
-            () =>
-            {
-                this.skipLeaderboardSubmit()
-            }
-        )
+        if (this.noWalletMode)
+        {
+            this.hud.showFinishLeaderboardControls(
+                SUBMIT_FEE_SATS,
+                () =>
+                {
+                },
+                () =>
+                {
+                    this.skipLeaderboardSubmit()
+                }
+            )
+            this.hud.setLeaderboardStatus('Leaderboard disabled in playtest mode')
+            this.hud.setFinishLeaderboardButtonsEnabled(false)
+        }
+        else
+        {
+            this.hud.showFinishLeaderboardControls(
+                SUBMIT_FEE_SATS,
+                () =>
+                {
+                    this.submitToLeaderboard()
+                },
+                () =>
+                {
+                    this.skipLeaderboardSubmit()
+                }
+            )
+        }
 
         this.loadAndShowTopEntry(nonce)
     }
@@ -393,6 +637,15 @@ export class PlatformerScene extends Phaser.Scene
 
         if (this.leaderboardSubmitting || this.leaderboardSubmitted)
         {
+            return
+        }
+
+        if (this.noWalletMode)
+        {
+            if (Phaser.Input.Keyboard.JustDown(this.skipKey))
+            {
+                this.skipLeaderboardSubmit()
+            }
             return
         }
 
@@ -445,15 +698,18 @@ export class PlatformerScene extends Phaser.Scene
                 return
             }
 
-            const identity = await resolveIdentityKey(playerId)
-            if (nonce !== this.finishNonce)
+            if (!this.noWalletMode)
             {
-                return
-            }
+                const identity = await resolveIdentityKey(playerId)
+                if (nonce !== this.finishNonce)
+                {
+                    return
+                }
 
-            if (identity?.name)
-            {
-                this.hud.setLeaderboardTop(identity.name, entry.score)
+                if (identity?.name)
+                {
+                    this.hud.setLeaderboardTop(identity.name, entry.score)
+                }
             }
         }
         catch
@@ -469,6 +725,11 @@ export class PlatformerScene extends Phaser.Scene
 
     private async submitToLeaderboard ()
     {
+        if (this.noWalletMode)
+        {
+            return
+        }
+
         if (!this.leaderboardPromptVisible || this.leaderboardSubmitting || this.leaderboardSubmitted)
         {
             return
@@ -485,6 +746,11 @@ export class PlatformerScene extends Phaser.Scene
 
         try
         {
+            const [{ default: BabbageGo }, { WalletClient }] = await Promise.all([
+                import('@babbage/go'),
+                import('@bsv/sdk')
+            ])
+
             const baseWallet = new WalletClient()
             let playerId = 'Anonymous'
             try
@@ -555,8 +821,8 @@ export class PlatformerScene extends Phaser.Scene
 
     private getMoveAxis (): -1 | 0 | 1
     {
-        const leftDown = this.cursors.left?.isDown ?? false
-        const rightDown = this.cursors.right?.isDown ?? false
+        const leftDown = (this.cursors.left?.isDown ?? false) || this.wasdKeys.left.isDown
+        const rightDown = (this.cursors.right?.isDown ?? false) || this.wasdKeys.right.isDown
 
         if (leftDown === rightDown)
         {
@@ -681,8 +947,9 @@ export class PlatformerScene extends Phaser.Scene
     {
         const upJustDown = this.cursors.up ? Phaser.Input.Keyboard.JustDown(this.cursors.up) : false
         const spaceJustDown = Phaser.Input.Keyboard.JustDown(this.jumpKey)
+        const wJustDown = Phaser.Input.Keyboard.JustDown(this.wasdKeys.up)
 
-        return upJustDown || spaceJustDown
+        return upJustDown || spaceJustDown || wJustDown
     }
 
     private applyWallSlide (body: Phaser.Physics.Arcade.Body)
